@@ -15,8 +15,8 @@ st.title("鳥栖PO1期 可視化ツール（kW/価格/オーバレイ/単独/供
 
 with st.sidebar:
     st.header("データ入力")
-    up = st.file_uploader("Excel（.xlsx）をアップロード", type=["xlsx"])
-    sheet_name = st.text_input("シート名（未入力なら先頭シート）", value="")
+    up = st.file_uploader("Excel（.xlsx）をアップロード", type=["xlsx"], key="auto_file_uploader_1")
+    sheet_name = st.text_input("シート名（未入力なら先頭シート）", value="", key="auto_text_input_1")
     st.divider()
     st.subheader("共通パラメータ")
     P_pcs_common = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="sb_pcs")
@@ -37,7 +37,7 @@ has_price = "JEPXスポットプライス" in df.columns and df["JEPXスポッ�
 min_t, max_t = df.index.min(), df.index.max()
 st.caption(f"データ期間: {min_t} 〜 {max_t}（JEPX価格列: {'あり' if has_price else 'なし'}）")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "1) 基本プロット（kW + 価格）",
     "2) 集計（kW/価格）",
     "4) オーバレイ（kW/価格）",
@@ -56,11 +56,11 @@ with tab1:
     with c1:
         series = st.selectbox("系列（出力）", ["both", "ロス後", "ロス前"], index=0, key="t1_series")
     with c2:
-        start = st.date_input("開始日", value=min_t.date(), min_value=min_t.date(), max_value=max_t.date(), key="t1_start")
+        start = st.date_input("開始日", value=min_t.date(, key="auto_start_1"), min_value=min_t.date(), max_value=max_t.date(), key="t1_start")
     with c3:
-        end = st.date_input("終了日", value=max_t.date(), min_value=min_t.date(), max_value=max_t.date(), key="t1_end")
+        end = st.date_input("終了日", value=max_t.date(, key="auto_end_1"), min_value=min_t.date(), max_value=max_t.date(), key="t1_end")
     with c4:
-        show_price = st.checkbox("JEPXスポットプライスを右軸に表示", value=has_price, disabled=not has_price)
+        show_price = st.checkbox("JEPXスポットプライスを右軸に表示", value=has_price, disabled=not has_price, key="auto_checkbox_1")
     dfr = select_range(df, pd.Timestamp(start), pd.Timestamp(end) + pd.Timedelta(days=1))
     plot_df = series_picker(dfr, series=series, use_kw=True)
     fig, ax = plt.subplots(figsize=(12,6))
@@ -81,15 +81,15 @@ with tab2:
     st.subheader("集計（kW/価格）")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        agg = st.selectbox("粒度", ["日平均(D)", "月平均(M)"], index=0, key="t2_agg")
+        agg = st.selectbox("粒度", ["日平均(D, key="auto_select_granularity")", "月平均(M)"], index=0, key="t2_agg")
     with c2:
         how = st.selectbox("集計方法（kW）", ["mean", "max", "min"], index=0, key="t2_how")
     with c3:
         series2 = st.selectbox("系列（kW）", ["both", "ロス後", "ロス前"], index=0, key="t2_series")
     with c4:
-        start2 = st.date_input("開始日", value=min_t.date(), key="t2_start")
+        start2 = st.date_input("開始日", value=min_t.date(, key="auto_start_2"), key="t2_start")
     with c5:
-        end2 = st.date_input("終了日", value=max_t.date(), key="t2_end")
+        end2 = st.date_input("終了日", value=max_t.date(, key="auto_end_2"), key="t2_end")
     show_price2 = st.checkbox("JEPX価格も表示（右軸：平均）", value=has_price, disabled=not has_price, key="t2_price")
     dfr2 = select_range(df, pd.Timestamp(start2), pd.Timestamp(end2) + pd.Timedelta(days=1))
     plot_df2 = series_picker(dfr2, series=series2, use_kw=True)
@@ -112,20 +112,20 @@ with tab2:
 with tab3:
     st.subheader("オーバレイ（kW/価格）")
     catalog = list_dates(df)
-    target = st.radio("対象", ["出力(kW)", "JEPXスポットプライス"], horizontal=True, key="t4_target")
+    target = st.radio("対象", ["出力(kW, key="auto_radio_target")", "JEPXスポットプライス"], horizontal=True, key="t4_target")
     if target == "出力(kW)":
         which = st.selectbox("ロス前/後", ["ロス後", "ロス前"], index=0, key="t4_which")
     mode = st.radio("オーバレイ種別", ["指定日", "月ごと同日", "年ごと同月日"], horizontal=True, key="t4_mode")
     if mode == "指定日":
-        choices = st.multiselect("日付を選択", catalog["date"].dt.strftime("%Y-%m-%d").tolist(), max_selections=20, key="t4_dates")
+        choices = st.multiselect("日付を選択", catalog["date"].dt.strftime("%Y-%m-%d", key="auto_multi_dates").tolist(), max_selections=20, key="t4_dates")
         dates = choices
     elif mode == "月ごと同日":
         day_of_month = st.number_input("日（1〜31）", min_value=1, max_value=31, value=15, step=1, key="t4_dom")
-        months = st.multiselect("対象月（YYYY-MM）", catalog["month_label"].unique().tolist(), default=catalog["month_label"].unique().tolist(), key="t4_months")
+        months = st.multiselect("対象月（YYYY-MM）", catalog["month_label"].unique(, key="auto_multi_months").tolist(), default=catalog["month_label"].unique().tolist(), key="t4_months")
         dates = [f"{m}-{day_of_month:02d}" for m in months]
     else:
         md = st.text_input("月日（MM-DD）", value="08-15", key="t4_md")
-        years = st.multiselect("対象年", sorted(catalog["year"].unique().tolist()), default=sorted(catalog["year"].unique().tolist()), key="t4_years")
+        years = st.multiselect("対象年", sorted(catalog["year"].unique(, key="auto_multi_years").tolist()), default=sorted(catalog["year"].unique().tolist()), key="t4_years")
         dates = [f"{y}-{md}" for y in years]
     if st.button("プロット", type="primary", key="t4_btn"):
         if target == "出力(kW)":
@@ -148,13 +148,13 @@ with tab4:
     st.subheader("単独表示（kW/価格・範囲指定）")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        agg5 = st.selectbox("粒度", ["30分(raw)", "日平均(D)", "月平均(M)"], index=0, key="t5_agg")
+        agg5 = st.selectbox("粒度", ["30分(raw, key="auto_select_granularity")", "日平均(D)", "月平均(M)"], index=0, key="t5_agg")
     with c2:
         series5 = st.selectbox("系列（kW）", ["both", "ロス後", "ロス前"], index=0, key="t5_series")
     with c3:
-        start5 = st.date_input("開始日", value=min_t.date(), key="t5_start")
+        start5 = st.date_input("開始日", value=min_t.date(, key="auto_start_3"), key="t5_start")
     with c4:
-        end5 = st.date_input("終了日", value=max_t.date(), key="t5_end")
+        end5 = st.date_input("終了日", value=max_t.date(, key="auto_end_3"), key="t5_end")
     with c5:
         show_price5 = st.checkbox("JEPX価格も表示（右軸）", value=has_price, disabled=not has_price, key="t5_price")
     dfr5 = select_range(df, pd.Timestamp(start5), pd.Timestamp(end5) + pd.Timedelta(days=1))
@@ -174,12 +174,12 @@ with tab5:
     st.subheader("供出可能量（定義①：1000-(L-G)）")
     c1, c2, c3 = st.columns(3)
     with c1:
-        start6 = st.date_input("開始日", value=min_t.date(), key="t6_start")
+        start6 = st.date_input("開始日", value=min_t.date(, key="auto_start_4"), key="t6_start")
     with c2:
-        end6 = st.date_input("終了日", value=max_t.date(), key="t6_end")
+        end6 = st.date_input("終了日", value=max_t.date(, key="auto_end_4"), key="t6_end")
     with c3:
-        P_exp_max = st.text_input("逆潮上限（kW／空欄=無制限）", value="")
-    load_col = st.selectbox("需要列の選択（なければ自動推定）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t6_load")
+        P_exp_max = st.text_input("逆潮上限（kW／空欄=無制限）", value="", key="auto_text_input_2")
+    load_col = st.selectbox("需要列の選択（なければ自動推定）", ["自動", "需要計画量(ロス前, key="auto_select_loadcol")", "需要計画量", "需要kW"], index=0, key="t6_load")
     gen_col = st.selectbox("自家発列の選択（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t6_gen")
     P_exp_max_val = None
     try:
@@ -221,9 +221,9 @@ with tab7:
     st.subheader("SOCシミュレーション（充電コマ考慮・期間指定）")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        start_soc = st.date_input("開始日", value=min_t.date(), key="t7_start")
+        start_soc = st.date_input("開始日", value=min_t.date(, key="auto_start_5"), key="t7_start")
     with c2:
-        end_soc = st.date_input("終了日", value=max_t.date(), key="t7_end")
+        end_soc = st.date_input("終了日", value=max_t.date(, key="auto_end_5"), key="t7_end")
     with c3:
         soc_init_pct = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0, key="t7_soc_init")
     with c4:
@@ -238,7 +238,7 @@ with tab7:
     with c8:
         P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
 
-    load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
+    load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前, key="auto_select_loadcol7")", "需要計画量", "需要kW"], index=0, key="t7_load")
     gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
 
     soc_df = simulate_soc_with_charge_periodic_reset(
@@ -275,7 +275,7 @@ with tab7:
 with tab9:
     st.subheader("充電コスト集計（月次・年間）")
     # パラメータ
-    month_sel = st.date_input("対象月（年月を指定）", value=min_t.date().replace(day=1), key="t9_month")
+    month_sel = st.date_input("対象月（年月を指定）", value=min_t.date(, key="auto_month_1").replace(day=1), key="t9_month")
 
     from utils_timeseries import simulate_soc_with_charge_periodic_reset
     soc_df = simulate_soc_with_charge_periodic_reset(
@@ -348,12 +348,12 @@ with tab8:
     # Parameters (align with SOC tab for consistency)
     c1, c2, c3 = st.columns(3)
     with c1:
-        start_cost = st.date_input("開始日", value=min_t.date(), key="t8_start")
+        start_cost = st.date_input("開始日", value=min_t.date(, key="auto_start_6"), key="t8_start")
     with c2:
-        end_cost = st.date_input("終了日", value=max_t.date(), key="t8_end")
+        end_cost = st.date_input("終了日", value=max_t.date(, key="auto_end_6"), key="t8_end")
     with c3:
         month_select = st.selectbox("月を指定（YYYY-MM、集計表示）", 
-                                    sorted(pd.to_datetime(df.index.date).astype("datetime64[M]").unique()),
+                                    sorted(pd.to_datetime(df.index.date, key="auto_select_month").astype("datetime64[M]").unique()),
                                     format_func=lambda x: pd.Timestamp(x).strftime("%Y-%m"),
                                     key="t8_month_sel")
 
