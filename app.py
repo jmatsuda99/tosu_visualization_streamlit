@@ -45,6 +45,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "6) 供出可能量（①：1000-(L-G)）",
     "7) 価格：1年分オーバレイ",
     "8) SOCシミュレーション（充電コマ考慮・期間指定）",
+    "9) 充電コスト集計",
+
 ])
 
 # --- Tab1 ---
@@ -267,3 +269,158 @@ with tab7:
 
         st.download_button("CSVをダウンロード（SOC/充電コマ）", data=soc_df.to_csv().encode("utf-8-sig"),
                            file_name="soc_with_charge_and_period.csv", mime="text/csv")
+
+
+# --- Tab9: 充電コスト集計 ---
+with tab9:
+    st.subheader("充電コスト集計（月次・年間）")
+    # パラメータ
+    month_sel = st.date_input("対象月（年月を指定）", value=min_t.date().replace(day=1), key="t9_month")
+
+    from utils_timeseries import simulate_soc_with_charge_periodic_reset
+    soc_df = simulate_soc_with_charge_periodic_reset(
+        df,
+        P_pcs=P_pcs_common, P_chg=1000, E_nom=2000,
+        start=min_t, end=max_t,
+        soc_init_pct=90.0, soc_floor_pct=10.0, reset_every_days=4
+    )
+
+    if "JEPXスポットプライス" not in df.columns:
+        st.warning("JEPXスポットプライス列が必要です。")
+    elif soc_df.empty:
+        st.warning("SOCシミュレーション結果がありません。")
+    else:
+        # 単価系列
+        price_series = df["JEPXスポットプライス"].astype(float).reindex(soc_df.index)
+        # 充電量 [kWh]
+        charge_kWh = []
+        E_prev = soc_df["SOC_kWh"].iloc[0]
+        for E, chg in zip(soc_df["SOC_kWh"], soc_df["charging"]):
+            if chg:
+                delta = E - E_prev
+                charge_kWh.append(max(0.0, delta))
+            else:
+                charge_kWh.append(0.0)
+            E_prev = E
+        charge_kWh = pd.Series(charge_kWh, index=soc_df.index)
+        cost = charge_kWh * price_series
+
+        # 月次コスト
+        month_start = pd.Timestamp(month_sel).replace(day=1)
+        month_end = (month_start + pd.offsets.MonthEnd(1))
+        cost_month = cost.loc[(cost.index >= month_start) & (cost.index <= month_end)]
+        total_month = cost_month.sum()
+
+        st.markdown(f"### {month_start.strftime('%Y-%m')} の充電コスト合計: **{total_month:,.0f} 円**")
+
+        fig9a, ax9a = plt.subplots(figsize=(10,4))
+        ax9a.plot(cost_month.index, cost_month.cumsum(), label="累計コスト")
+        ax9a.set_ylabel("累計コスト (円)")
+        ax9a.set_xlabel("時刻")
+        ax9a.set_title(f"{month_start.strftime('%Y-%m')} 充電コスト累計推移")
+        ax9a.grid(True); ax9a.legend()
+        st.pyplot(fig9a)
+
+        # 年間コスト（月次合計棒グラフ）
+        cost_monthly = cost.resample("M").sum()
+        total_year = cost_monthly.sum()
+
+        fig9b, ax9b = plt.subplots(figsize=(12,5))
+        cost_monthly.plot(kind="bar", ax=ax9b)
+        ax9b.set_ylabel("充電コスト (円)")
+        ax9b.set_title("月次充電コスト合計（年間推移）")
+        st.pyplot(fig9b)
+
+        st.markdown(f"### 年間充電コスト合計: **{total_year:,.0f} 円**")
+
+        out_df = pd.DataFrame({"充電量[kWh]": charge_kWh, "単価[円/kWh]": price_series, "コスト[円]": cost})
+        st.download_button("CSVをダウンロード（コマ単位コスト）", data=out_df.to_csv().encode("utf-8-sig"),
+                           file_name="charge_cost_timeseries.csv", mime="text/csv")
+        st.download_button("CSVをダウンロード（月次集計）", data=cost_monthly.to_csv().encode("utf-8-sig"),
+                           file_name="charge_cost_monthly.csv", mime="text/csv")
+
+
+# --- Tab8: Charging cost summary ---
+with tab8:
+    st.subheader("充電コスト（集計）")
+    st.caption("充電は買電扱い：各スロットの充電量[kWh] × JEPX価格[円/kWh] を加算して表示")
+
+    # Parameters (align with SOC tab for consistency)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        start_cost = st.date_input("開始日", value=min_t.date(), key="t8_start")
+    with c2:
+        end_cost = st.date_input("終了日", value=max_t.date(), key="t8_end")
+    with c3:
+        month_select = st.selectbox("月を指定（YYYY-MM、集計表示）", 
+                                    sorted(pd.to_datetime(df.index.date).astype("datetime64[M]").unique()),
+                                    format_func=lambda x: pd.Timestamp(x).strftime("%Y-%m"),
+                                    key="t8_month_sel")
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        soc_init_pct8 = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0, key="t8_soc_init")
+    with c5:
+        soc_floor_pct8 = st.number_input("下限SOC（%）", min_value=0.0, max_value=90.0, value=10.0, step=1.0, key="t8_soc_floor")
+    with c6:
+        reset_days8 = st.number_input("充電間隔（日）", min_value=1, value=4, step=1, key="t8_reset_days")
+
+    c7, c8, c9 = st.columns(3)
+    with c7:
+        E_nom8 = st.number_input("電池容量（kWh）", min_value=100, value=2000, step=100, key="t8_enom")
+    with c8:
+        P_chg8 = st.number_input("充電出力（kW）", min_value=1, value=1000, step=10, key="t8_pchg")
+    with c9:
+        P_pcs8 = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t8_pcs")
+
+    # Run SOC simulation for the requested period
+    from utils_timeseries import simulate_soc_with_charge_periodic_reset, derive_charge_cost_series
+    dfr8 = select_range(df, pd.Timestamp(start_cost), pd.Timestamp(end_cost) + pd.Timedelta(days=1))
+    soc_df8 = simulate_soc_with_charge_periodic_reset(
+        dfr8, P_pcs=P_pcs8, P_chg=P_chg8, E_nom=E_nom8,
+        start=pd.Timestamp(start_cost), end=pd.Timestamp(end_cost) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
+        soc_init_pct=soc_init_pct8, soc_floor_pct=soc_floor_pct8, reset_every_days=reset_days8
+    )
+
+    if soc_df8.empty:
+        st.warning("SOCシミュレーション対象期間にデータがありません。")
+    else:
+        charge_kWh, price_series, cost, cum_cost = derive_charge_cost_series(soc_df8, dfr8)
+
+        # Annual (period) cumulative
+        figc, ax = plt.subplots(figsize=(12,6))
+        ax.plot(cum_cost.index, cum_cost.values, label="累計コスト", color="orange")
+        ax.set_xlabel("時刻"); ax.set_ylabel("累計コスト (円)"); ax.set_title("累計充電コスト（選択期間）")
+        ax.grid(True); ax.legend()
+        st.pyplot(figc)
+
+        # Monthly totals
+        monthly = cost.resample("MS").sum().rename("充電コスト(月計)")
+        month_labels = monthly.index.strftime("%Y-%m")
+        figm, axm = plt.subplots(figsize=(10,5))
+        axm.bar(month_labels, monthly.values)
+        axm.set_ylabel("コスト (円)"); axm.set_title("月別 充電コスト")
+        axm.tick_params(axis="x", rotation=45); axm.grid(True, axis="y", alpha=0.3)
+        st.pyplot(figm)
+
+        # Selected month details
+        month_str = pd.Timestamp(month_select).strftime("%Y-%m")
+        m0 = pd.Timestamp(month_str + "-01")
+        m1 = (m0 + pd.offsets.MonthBegin(1))
+        m_cost = cost.loc[(cost.index >= m0) & (cost.index < m1)]
+        st.markdown(f"**指定月 ({month_str}) の充電コスト合計:** {m_cost.sum():,.0f} 円")
+        figd, axd = plt.subplots(figsize=(12,4))
+        axd.plot(m_cost.index, m_cost.values)
+        axd.set_ylabel("コスト (円/30分)"); axd.set_title(f"日次内訳（{month_str}）")
+        axd.grid(True)
+        st.pyplot(figd)
+
+        # Totals
+        st.markdown(f"**選択期間の合計コスト:** {cost.sum():,.0f} 円")
+
+        # Downloads
+        st.download_button("月別コストCSV", data=monthly.to_csv().encode("utf-8-sig"),
+                           file_name="monthly_charge_cost.csv", mime="text/csv")
+        per_slot = pd.DataFrame({"charge_kWh": charge_kWh, "price_yen_per_kWh": price_series, "cost_yen": cost, "cum_cost_yen": cum_cost})
+        st.download_button("スロット別コストCSV", data=per_slot.to_csv().encode("utf-8-sig"),
+                           file_name="slot_charge_cost.csv", mime="text/csv")

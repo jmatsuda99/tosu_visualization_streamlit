@@ -269,3 +269,25 @@ def plot_lines(x, y_dict, xlabel, ylabel, title):
     plt.legend()
     plt.grid(True)
     return plt.gcf()
+
+
+def derive_charge_cost_series(soc_df, df_price, price_col="JEPXスポットプライス"):
+    """
+    soc_df: simulate_soc_with_charge_periodic_reset の結果（index: 30分刻み）
+    df_price: 元データ（価格列を持つ）
+    戻り値: (charge_kWh: Series, price: Series, cost: Series, cum_cost: Series)
+    """
+    if price_col not in df_price.columns:
+        price_series = pd.Series(0.0, index=soc_df.index)
+    else:
+        price_series = df_price[price_col].astype(float).reindex(soc_df.index)
+
+    # 充電kWhの推定：充電フラグの時だけ、SOC_kWhの増分を採用（負は0）
+    soc_e = soc_df["SOC_kWh"]
+    delta = soc_e.diff().fillna(0.0)
+    charge_kWh = pd.Series(0.0, index=soc_df.index)
+    charge_kWh[soc_df["charging"]] = delta.clip(lower=0.0)[soc_df["charging"]]
+
+    cost = charge_kWh * price_series
+    cum_cost = cost.cumsum()
+    return charge_kWh, price_series, cost, cum_cost
