@@ -19,7 +19,7 @@ with st.sidebar:
     sheet_name = st.text_input("シート名（未入力なら先頭シート）", value="")
     st.divider()
     st.subheader("共通パラメータ")
-    P_pcs_common = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
+    P_pcs_common = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="sb_pcs")
 
 if up is None:
     st.info("左のサイドバーからExcelファイルをアップロードしてください。")
@@ -199,7 +199,7 @@ with tab5:
 # --- Tab6: Price full-year overlay ---
 with tab6:
     st.subheader("JEPXスポットプライス：1年分オーバレイ（各日×48スロット）")
-    ymax = st.number_input("縦軸上限（円/kWh）", min_value=10, value=40, step=5)
+    ymax = st.number_input("縦軸上限（円/kWh）", min_value=10, value=40, step=5, key="t6_ymax")
     mat = overlay_price_full_year(df)
     if mat.empty:
         st.warning("価格列が見つからないか、データがありません。")
