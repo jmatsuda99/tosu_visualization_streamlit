@@ -5,17 +5,22 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from utils_timeseries import (
     load_excel_to_df, select_range, series_picker, aggregate_df,
-    list_dates, get_day_slice, overlay_by_dates, overlay_by_dates_price, plot_lines
+    list_dates, get_day_slice, overlay_by_dates, overlay_by_dates_price, plot_lines,
+    compute_export_offer_def1
 )
 
 st.set_page_config(page_title="鳥栖PO1期 可視化ツール", layout="wide")
 
-st.title("鳥栖PO1期 可視化ツール（kW換算・オーバレイ／単独表示 + JEPX価格）")
+st.title("鳥栖PO1期 可視化ツール（kW換算／価格／オーバレイ／単独表示／供出可能量①）")
 
 with st.sidebar:
     st.header("データ入力")
     up = st.file_uploader("Excel（.xlsx）をアップロード", type=["xlsx"])
     sheet_name = st.text_input("シート名（未入力なら先頭シート）", value="")
+    st.divider()
+    st.subheader("供出可能量（①）計算パラメータ")
+    P_pcs = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10)
+    P_exp_max = st.text_input("逆潮上限（kW／空欄=無制限）", value="")
 
 if up is None:
     st.info("左のサイドバーからExcelファイルをアップロードしてください。")
@@ -23,7 +28,7 @@ if up is None:
 
 # Load
 try:
-    df = load_excel_to_df(up, sheet_name if sheet_name.strip() else None)
+    df = load_excel_to_df(up, sheet_name)
 except Exception as e:
     st.error(f"読み込みエラー: {e}")
     st.stop()
@@ -35,11 +40,12 @@ has_price = "JEPXスポットプライス" in df.columns and df["JEPXスポッ�
 min_t, max_t = df.index.min(), df.index.max()
 st.caption(f"データ期間: {min_t} 〜 {max_t}（JEPX価格列: {'あり' if has_price else 'なし'}）")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1) 基本プロット（kW + 価格）",
     "2) 集計（kW/価格）",
     "4) オーバレイ（kW/価格）",
     "5) 単独表示（kW/価格・範囲指定）",
+    "6) 供出可能量（①：1000-(L-G)）",
 ])
 
 # ---------- Tab1: Basic plot ----------
@@ -66,7 +72,7 @@ with tab1:
     title = "平均出力（30分・kW）"
     if show_price:
         ax2 = ax.twinx()
-        ax2.plot(dfr.index, dfr["JEPXスポットプライス"], alpha=0.7)
+        ax2.plot(dfr.index, dfr["JEPXスポットプライス"])
         ax2.set_ylabel("JEPXスポットプライス (円/kWh)")
         title += " + JEPX価格"
     ax.set_title(title)
@@ -117,6 +123,7 @@ with tab2:
 # ---------- Tab3: Overlay ----------
 with tab3:
     st.subheader("オーバレイ")
+    from utils_timeseries import list_dates
     catalog = list_dates(df)
 
     target = st.radio("対象", ["出力(kW)", "JEPXスポットプライス"], horizontal=True, key="t4_target")
@@ -144,10 +151,12 @@ with tab3:
 
     if st.button("プロット", type="primary", key="t4_btn"):
         if target == "出力(kW)":
+            from utils_timeseries import overlay_by_dates
             mat = overlay_by_dates(df, dates, which=which)
             ylabel = "平均出力 (kW)"
             title = f"日曲線オーバレイ（{which}）"
         else:
+            from utils_timeseries import overlay_by_dates_price
             mat = overlay_by_dates_price(df, dates)
             ylabel = "JEPXスポットプライス (円/kWh)"
             title = "日曲線オーバレイ（JEPX価格）"
@@ -164,7 +173,6 @@ with tab3:
             ax.legend()
             ax.grid(True)
             st.pyplot(fig3)
-
             st.download_button("CSVをダウンロード", data=mat.to_csv(index_label="slot(30min)").encode("utf-8-sig"),
                                file_name=("overlay_kw.csv" if target=="出力(kW)" else "overlay_jepx.csv"), mime="text/csv")
 
@@ -208,4 +216,55 @@ with tab4:
     ax.grid(True)
     st.pyplot(fig5)
 
-st.caption("© Tosu PO1 Visualizer — built with Streamlit & Matplotlib")
+# ---------- Tab5: 供出可能量（定義①） ----------
+with tab5:
+    st.subheader("供出可能量（定義①：1000-(L-G)）")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        start6 = st.date_input("開始日", value=min_t.date(), key="t6_start")
+    with c2:
+        end6 = st.date_input("終了日", value=max_t.date(), key="t6_end")
+    with c3:
+        load_col = st.selectbox("需要列の選択（なければ自動推定）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0)
+    gen_col = st.selectbox("自家発列の選択（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0)
+
+    # parse exp max
+    P_exp_max_val = None
+    try:
+        P_exp_max_val = float(P_exp_max) if len(P_exp_max.strip()) > 0 else None
+    except Exception:
+        P_exp_max_val = None
+
+    dfr6 = select_range(df, pd.Timestamp(start6), pd.Timestamp(end6) + pd.Timedelta(days=1))
+    offer, L, G = compute_export_offer_def1(
+        dfr6,
+        P_pcs=float(P_pcs),
+        P_exp_max=P_exp_max_val,
+        load_col=(None if load_col=="自動" else load_col),
+        gen_col=(None if gen_col=="自動" else gen_col),
+    )
+
+    # 時系列グラフ + 最小値の点線表示とラベル
+    min_val = offer.min()
+    min_ts = offer.idxmin()
+    fig6, ax = plt.subplots(figsize=(12,6))
+    ax.plot(offer.index, offer.values, label="供出可能量(①)")
+    ax.axhline(min_val, linestyle="--", label=f"最小値 {min_val:.1f} kW")
+    # 注記を右寄りに配置
+    x_pos = offer.index[int(len(offer)*0.6)]
+    ax.text(x_pos, float(min_val), f"最小値 {min_val:.1f} kW @ {min_ts}", bbox=dict(facecolor="white", alpha=0.7))
+    ax.set_xlabel("時刻")
+    ax.set_ylabel("供出可能量 (kW)")
+    ax.set_title("一次調整力 供出可能量（定義①）— 推移と最小値")
+    ax.grid(True)
+    ax.legend()
+    st.pyplot(fig6)
+
+    # CSVダウンロード
+    out_df = pd.DataFrame({
+        "供出可能量kW(①=PCS-(L-G))": offer,
+        "需要kW(L)": L,
+        "自家発kW(G)": G,
+    })
+    st.download_button("CSVをダウンロード", data=out_df.to_csv().encode("utf-8-sig"),
+                       file_name="export_offer_def1.csv", mime="text/csv")

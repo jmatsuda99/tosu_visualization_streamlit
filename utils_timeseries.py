@@ -18,7 +18,7 @@ def load_excel_to_df(file, sheet_name=None):
     Load the Excel file into a cleaned dataframe.
     Adds kW columns (kWh / 0.5h) and keeps JEPXスポットプライス if present.
     """
-    if sheet_name is None:
+    if sheet_name is None or len(str(sheet_name).strip()) == 0:
         xls = pd.ExcelFile(file)
         sheet_name = xls.sheet_names[0]
     df = pd.read_excel(file, sheet_name=sheet_name)
@@ -131,6 +131,42 @@ def overlay_by_dates_price(df, dates):
         ser = pd.Series(ser.values, index=slots).reindex(range(48))
         mat[str(pd.to_datetime(d).date())] = ser.values
     return mat
+
+# ---------- 供出可能量（定義①）関連 ----------
+def pick_load_series(df, preferred=None):
+    """
+    優先列を指定できる。なければ需要計画量(ロス前)→使用電力量(ロス後)/0.5 の順で選ぶ。
+    """
+    if preferred and preferred in df.columns:
+        return df[preferred].astype(float)
+    candidates = ["需要計画量(ロス前)", "需要計画量", "需要kW"]
+    for c in candidates:
+        if c in df.columns and df[c].notna().any():
+            return df[c].astype(float)
+    # fallback: 使用電力量(ロス後)をkW換算
+    return (df["使用電力量(ロス後)"].astype(float) / 0.5)
+
+def pick_generation_series(df, preferred=None):
+    """
+    自家発がなければゼロ系列を返す。
+    """
+    if preferred and preferred in df.columns:
+        return df[preferred].astype(float)
+    for c in ["自家発出力", "PV出力", "太陽光出力", "発電kW"]:
+        if c in df.columns and df[c].notna().any():
+            return df[c].astype(float)
+    return pd.Series(0.0, index=df.index)
+
+def compute_export_offer_def1(df, P_pcs=1000.0, P_exp_max=None, load_col=None, gen_col=None):
+    """
+    供出可能量（定義①）: max(0, P_pcs - (L - G)), 逆潮上限でクリップ
+    """
+    L = pick_load_series(df, preferred=load_col)
+    G = pick_generation_series(df, preferred=gen_col)
+    offer = (P_pcs - (L - G)).clip(lower=0)
+    if P_exp_max is not None:
+        offer = offer.clip(upper=float(P_exp_max))
+    return offer, L, G
 
 def plot_lines(x, y_dict, xlabel, ylabel, title):
     plt.figure(figsize=(12, 6))
