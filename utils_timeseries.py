@@ -25,11 +25,10 @@ def load_excel_to_df(file, sheet_name=None):
     for c in OPTIONAL_COLUMNS:
         if c not in df.columns:
             df[c] = pd.NA
-
     df["開始日時"] = pd.to_datetime(df["開始日時"], errors="coerce")
     df = df.dropna(subset=["開始日時"]).copy()
     df = df.set_index("開始日時").sort_index()
-
+    # kW列
     df["使用電力量(ロス後)_kW"] = df["使用電力量(ロス後)"] / 0.5
     df["使用電力量(ロス前)_kW"] = df["使用電力量(ロス前)"] / 0.5
     return df
@@ -117,9 +116,8 @@ def overlay_by_dates_price(df, dates):
     return mat
 
 def overlay_price_full_year(df):
-    """1年分の各日の日曲線（価格）を 0..47 スロットで並べた行列を返す"""
+    """1年分の各日（JEPX価格）を0..47スロットに並べた行列"""
     mat = pd.DataFrame(index=range(48))
-    # tz考慮したユニーク日
     if df.index.tz is not None:
         uniq_days = pd.to_datetime(df.index.tz_convert("Asia/Tokyo").date).unique()
     else:
@@ -160,22 +158,64 @@ def compute_export_offer_def1(df, P_pcs=1000.0, P_exp_max=None, load_col=None, g
         offer = offer.clip(upper=float(P_exp_max))
     return offer, L, G
 
-# ---------- SOC simulation with periodic reset ----------
+# ---------- SOC simulation (periodic reset, immediate reset - legacy) ----------
 def simulate_soc_periodic_reset(
     df, P_pcs=1000.0, E_nom=2000.0, start=None,
     soc_init_pct=90.0, soc_floor_pct=10.0, reset_every_days=4,
     load_col=None, gen_col=None
 ):
-    """4日などの周期で日の初め(00:00)にSOCを初期値に戻す前提でSOC推移を返す"""
     if start is not None:
         start = pd.Timestamp(start)
         if df.index.tz is not None and start.tzinfo is None:
             start = start.tz_localize(df.index.tz)
         df = df.loc[df.index >= start]
+    L = pick_load_series(df, preferred=load_col)
+    G = pick_generation_series(df, preferred=gen_col)
+    net_load = (L - G).clip(lower=0.0)
+    supply_kW = net_load.clip(upper=P_pcs)
+    use_kWh = (supply_kW * 0.5).fillna(0.0)
+    E_init = float(soc_init_pct) / 100.0 * E_nom
+    E_floor = float(soc_floor_pct) / 100.0 * E_nom
+    times = use_kWh.index
+    if len(times) == 0:
+        return pd.DataFrame(columns=["SOC_kWh", "SOC_%", "recharged", "hit_floor"])
+    start_day = times[0].normalize()
+    E = E_init
+    soc_kWh, soc_pct, recharged, hit_floor = [], [], [], []
+    for t, e_use in use_kWh.items():
+        day_num = int((t.normalize() - start_day) / pd.Timedelta(days=1))
+        if (t.hour == 0 and t.minute == 0) and (day_num % int(reset_every_days) == 0):
+            E = E_init
+            recharged.append(True)
+        else:
+            recharged.append(False)
+        E = max(E_floor, E - float(e_use))
+        soc_kWh.append(E)
+        soc_pct.append(100.0 * E / E_nom)
+        hit_floor.append(E <= E_floor + 1e-9)
+    return pd.DataFrame({"SOC_kWh": soc_kWh, "SOC_%": soc_pct, "recharged": recharged, "hit_floor": hit_floor}, index=times)
+
+# ---------- SOC simulation with charge slots ----------
+def simulate_soc_with_charge_periodic_reset(
+    df, P_pcs=1000.0, P_chg=1000.0, E_nom=2000.0,
+    start=None, end=None,
+    soc_init_pct=90.0, soc_floor_pct=10.0, reset_every_days=4,
+    load_col=None, gen_col=None
+):
+    # 期間トリム
+    if start is not None:
+        start = pd.Timestamp(start)
+        if df.index.tz is not None and start.tzinfo is None:
+            start = start.tz_localize(df.index.tz)
+        df = df.loc[df.index >= start]
+    if end is not None:
+        end = pd.Timestamp(end)
+        if df.index.tz is not None and end.tzinfo is None:
+            end = end.tz_localize(df.index.tz)
+        df = df.loc[df.index <= end]
 
     L = pick_load_series(df, preferred=load_col)
     G = pick_generation_series(df, preferred=gen_col)
-
     net_load = (L - G).clip(lower=0.0)
     supply_kW = net_load.clip(upper=P_pcs)
     use_kWh = (supply_kW * 0.5).fillna(0.0)
@@ -185,29 +225,39 @@ def simulate_soc_periodic_reset(
 
     times = use_kWh.index
     if len(times) == 0:
-        return pd.DataFrame(columns=["SOC_kWh", "SOC_%", "recharged", "hit_floor"])
+        return pd.DataFrame(columns=["SOC_kWh", "SOC_%", "charging"])
 
     start_day = times[0].normalize()
+
     E = E_init
+    charging_mode = False
+    charge_deficit = 0.0
+
     soc_kWh = []
     soc_pct = []
-    recharged = []
-    hit_floor = []
+    charging_flags = []
 
     for t, e_use in use_kWh.items():
         day_num = int((t.normalize() - start_day) / pd.Timedelta(days=1))
         if (t.hour == 0 and t.minute == 0) and (day_num % int(reset_every_days) == 0):
-            E = E_init
-            recharged.append(True)
-        else:
-            recharged.append(False)
+            charge_deficit = max(0.0, E_init - E)
+            charging_mode = charge_deficit > 0.0
 
-        E = max(E_floor, E - float(e_use))
+        if charging_mode:
+            add_kWh = min(float(P_chg) * 0.5, charge_deficit)
+            E = min(E_init, E + add_kWh)
+            charge_deficit -= add_kWh
+            if charge_deficit <= 1e-9 or E >= E_init - 1e-9:
+                charging_mode = False
+            charging_flags.append(True)
+        else:
+            E = max(E_floor, E - float(e_use))
+            charging_flags.append(False)
+
         soc_kWh.append(E)
         soc_pct.append(100.0 * E / E_nom)
-        hit_floor.append(E <= E_floor + 1e-9)
 
-    return pd.DataFrame({"SOC_kWh": soc_kWh, "SOC_%": soc_pct, "recharged": recharged, "hit_floor": hit_floor}, index=times)
+    return pd.DataFrame({"SOC_kWh": soc_kWh, "SOC_%": soc_pct, "charging": charging_flags}, index=times)
 
 def plot_lines(x, y_dict, xlabel, ylabel, title):
     plt.figure(figsize=(12, 6))

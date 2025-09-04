@@ -6,11 +6,12 @@ import matplotlib.pyplot as plt
 from utils_timeseries import (
     load_excel_to_df, select_range, series_picker, aggregate_df,
     list_dates, get_day_slice, overlay_by_dates, overlay_by_dates_price, overlay_price_full_year,
-    plot_lines, compute_export_offer_def1, simulate_soc_periodic_reset
+    plot_lines, compute_export_offer_def1,
+    simulate_soc_with_charge_periodic_reset
 )
 
 st.set_page_config(page_title="鳥栖PO1期 可視化ツール", layout="wide")
-st.title("鳥栖PO1期 可視化ツール（kW/価格/オーバレイ/単独/供出可能量①/SOCシミュレーション）")
+st.title("鳥栖PO1期 可視化ツール（kW/価格/オーバレイ/単独/供出可能量①/SOC充電対応）")
 
 with st.sidebar:
     st.header("データ入力")
@@ -43,7 +44,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "5) 単独表示（kW/価格・範囲指定）",
     "6) 供出可能量（①：1000-(L-G)）",
     "7) 価格：1年分オーバレイ",
-    "8) SOCシミュレーション（周期リセット）",
+    "8) SOCシミュレーション（充電コマ考慮・期間指定）",
 ])
 
 # --- Tab1 ---
@@ -213,43 +214,56 @@ with tab6:
         st.download_button("CSVをダウンロード（48×日数）", data=mat.to_csv(index_label="slot(30min)").encode("utf-8-sig"),
                            file_name="jepx_overlay_full_year.csv", mime="text/csv")
 
-# --- Tab7: SOC simulation periodic reset ---
+# --- Tab7: SOC simulation with charge and period selection ---
 with tab7:
-    st.subheader("SOCシミュレーション（周期リセット）")
+    st.subheader("SOCシミュレーション（充電コマ考慮・期間指定）")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         start_soc = st.date_input("開始日", value=min_t.date(), key="t7_start")
     with c2:
-        soc_init_pct = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0)
+        end_soc = st.date_input("終了日", value=max_t.date(), key="t7_end")
     with c3:
-        soc_floor_pct = st.number_input("下限SOC（%）", min_value=0.0, max_value=90.0, value=10.0, step=1.0)
+        soc_init_pct = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0)
     with c4:
-        reset_days = st.number_input("充電間隔（日）", min_value=1, value=4, step=1)
+        soc_floor_pct = st.number_input("下限SOC（%）", min_value=0.0, max_value=90.0, value=10.0, step=1.0)
     with c5:
+        reset_days = st.number_input("充電間隔（日）", min_value=1, value=4, step=1)
+    c6, c7, c8 = st.columns(3)
+    with c6:
         E_nom = st.number_input("電池容量（kWh）", min_value=100, value=2000, step=100)
+    with c7:
+        P_chg = st.number_input("充電出力（kW）", min_value=1, value=1000, step=10)
+    with c8:
+        P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10)
+
     load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
     gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
 
-    dfr7 = select_range(df, pd.Timestamp(start_soc), None)
-    soc_df = simulate_soc_periodic_reset(
-        dfr7, P_pcs=P_pcs_common, E_nom=E_nom, start=pd.Timestamp(start_soc),
+    soc_df = simulate_soc_with_charge_periodic_reset(
+        df,
+        P_pcs=P_pcs_for_soc, P_chg=P_chg, E_nom=E_nom,
+        start=pd.Timestamp(start_soc), end=pd.Timestamp(end_soc) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
         soc_init_pct=soc_init_pct, soc_floor_pct=soc_floor_pct, reset_every_days=reset_days,
-        load_col=(None if load_col7=="自動" else load_col7), gen_col=(None if gen_col7=="自動" else gen_col7)
+        load_col=(None if load_col7=="自動" else load_col7),
+        gen_col=(None if gen_col7=="自動" else gen_col7)
     )
 
     if soc_df.empty:
         st.warning("SOCシミュレーションに必要なデータが不足しています。")
     else:
         fig8, ax = plt.subplots(figsize=(12,6))
-        ax.plot(soc_df.index, soc_df["SOC_%"], label="SOC（%）")
-        # リセット点
-        reset_points = soc_df[soc_df["recharged"]].index
-        if len(reset_points) > 0:
-            ax.scatter(reset_points, soc_df.loc[reset_points, "SOC_%"], marker="o", s=30, label="周期リセット")
-        # 下限ライン
+        ax.plot(soc_df.index, soc_df["SOC_%"], drawstyle="steps-post", label="SOC（%）")
+        chg_idx = soc_df.index[soc_df["charging"]]
+        if len(chg_idx) > 0:
+            ax.scatter(chg_idx, soc_df.loc[chg_idx, "SOC_%"], s=20, label="充電スロット")
         ax.axhline(soc_floor_pct, linestyle="--", label=f"下限 {soc_floor_pct:.1f}%")
-        ax.set_xlabel("時刻"); ax.set_ylabel("SOC (%)"); ax.set_title("SOCの推移（周期リセット）"); ax.grid(True); ax.legend()
+        ax.axhline(soc_init_pct, linestyle="--", label=f"初期 {soc_init_pct:.1f}%")
+        ax.set_xlabel("時刻"); ax.set_ylabel("SOC (%)"); ax.set_title("SOCの推移（充電コマ考慮）")
+        ax.grid(True)
+        handles, labels = ax.get_legend_handles_labels()
+        uniq = dict(zip(labels, handles))
+        ax.legend(uniq.values(), uniq.keys())
         st.pyplot(fig8)
 
-        st.download_button("CSVをダウンロード（SOC）", data=soc_df.to_csv().encode("utf-8-sig"),
-                           file_name="soc_periodic_reset.csv", mime="text/csv")
+        st.download_button("CSVをダウンロード（SOC/充電コマ）", data=soc_df.to_csv().encode("utf-8-sig"),
+                           file_name="soc_with_charge_and_period.csv", mime="text/csv")
