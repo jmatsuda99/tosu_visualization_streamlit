@@ -19,7 +19,7 @@ with st.sidebar:
     sheet_name = st.text_input("シート名（未入力なら先頭シート）", value="")
     st.divider()
     st.subheader("共通パラメータ")
-    P_pcs_common = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10)
+    P_pcs_common = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
 
 if up is None:
     st.info("左のサイドバーからExcelファイルをアップロードしてください。")
@@ -223,18 +223,18 @@ with tab7:
     with c2:
         end_soc = st.date_input("終了日", value=max_t.date(), key="t7_end")
     with c3:
-        soc_init_pct = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0)
+        soc_init_pct = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0, key="t7_soc_init")
     with c4:
-        soc_floor_pct = st.number_input("下限SOC（%）", min_value=0.0, max_value=90.0, value=10.0, step=1.0)
+        soc_floor_pct = st.number_input("下限SOC（%）", min_value=0.0, max_value=90.0, value=10.0, step=1.0, key="t7_soc_floor")
     with c5:
-        reset_days = st.number_input("充電間隔（日）", min_value=1, value=4, step=1)
+        reset_days = st.number_input("充電間隔（日）", min_value=1, value=4, step=1, key="t7_reset_days")
     c6, c7, c8 = st.columns(3)
     with c6:
-        E_nom = st.number_input("電池容量（kWh）", min_value=100, value=2000, step=100)
+        E_nom = st.number_input("電池容量（kWh）", min_value=100, value=2000, step=100, key="t7_enom")
     with c7:
-        P_chg = st.number_input("充電出力（kW）", min_value=1, value=1000, step=10)
+        P_chg = st.number_input("充電出力（kW）", min_value=1, value=1000, step=10, key="t7_pchg")
     with c8:
-        P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10)
+        P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
 
     load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
     gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
