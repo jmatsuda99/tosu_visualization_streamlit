@@ -4,48 +4,34 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 
-# ---- Global font: try Noto Sans CJK JP (fallback to default) ----
 try:
     rcParams["font.family"] = "Noto Sans CJK JP"
 except Exception:
     pass
 
 REQUIRED_COLUMNS_MIN = ["開始日時", "使用電力量(ロス後)", "使用電力量(ロス前)"]
-OPTIONAL_COLUMNS = ["JEPXスポットプライス"]  # 円/kWh
+OPTIONAL_COLUMNS = ["JEPXスポットプライス"]
 
 def load_excel_to_df(file, sheet_name=None):
-    """
-    Load the Excel file into a cleaned dataframe.
-    Adds kW columns (kWh / 0.5h) and keeps JEPXスポットプライス if present.
-    """
     if sheet_name is None or len(str(sheet_name).strip()) == 0:
         xls = pd.ExcelFile(file)
         sheet_name = xls.sheet_names[0]
     df = pd.read_excel(file, sheet_name=sheet_name)
-
-    # Filter out non-time-series rows where '終了日時' is NaN (if exists)
     if "終了日時" in df.columns:
         df = df[df["終了日時"].notna()].copy()
-
-    # Ensure required columns
     for c in REQUIRED_COLUMNS_MIN:
         if c not in df.columns:
             raise ValueError(f"必須列が見つかりません: {c}")
-
-    # Keep optional columns even if missing
     for c in OPTIONAL_COLUMNS:
         if c not in df.columns:
             df[c] = pd.NA
 
-    # Parse datetime and index
     df["開始日時"] = pd.to_datetime(df["開始日時"], errors="coerce")
     df = df.dropna(subset=["開始日時"]).copy()
     df = df.set_index("開始日時").sort_index()
 
-    # kW columns
-    df["使用電力量(ロス後)_kW"] = df["使用電力量(ロス後)"] / 0.5  # 30min -> avg kW
+    df["使用電力量(ロス後)_kW"] = df["使用電力量(ロス後)"] / 0.5
     df["使用電力量(ロス前)_kW"] = df["使用電力量(ロス前)"] / 0.5
-
     return df
 
 def select_range(df, start=None, end=None):
@@ -68,7 +54,6 @@ def series_picker(df, series="both", use_kw=True):
         cols = {"ロス後": "使用電力量(ロス後)_kW", "ロス前": "使用電力量(ロス前)_kW"}
     else:
         cols = {"ロス後": "使用電力量(ロス後)", "ロス前": "使用電力量(ロス前)"}
-
     if series == "ロス後":
         out = df[[cols["ロス後"]]].rename(columns={cols["ロス後"]: "ロス後"})
     elif series == "ロス前":
@@ -119,7 +104,6 @@ def overlay_by_dates(df, dates, which="ロス後"):
     return mat
 
 def overlay_by_dates_price(df, dates):
-    """Overlay matrix for JEPXスポットプライス（円/kWh）"""
     mat = pd.DataFrame(index=range(48))
     for d in dates:
         day = get_day_slice(df, d)
@@ -132,24 +116,35 @@ def overlay_by_dates_price(df, dates):
         mat[str(pd.to_datetime(d).date())] = ser.values
     return mat
 
-# ---------- 供出可能量（定義①）関連 ----------
+def overlay_price_full_year(df):
+    """1年分の各日の日曲線（価格）を 0..47 スロットで並べた行列を返す"""
+    mat = pd.DataFrame(index=range(48))
+    # tz考慮したユニーク日
+    if df.index.tz is not None:
+        uniq_days = pd.to_datetime(df.index.tz_convert("Asia/Tokyo").date).unique()
+    else:
+        uniq_days = pd.to_datetime(df.index.date).unique()
+    for d in uniq_days:
+        day = get_day_slice(df, d)
+        if day.empty or "JEPXスポットプライス" not in day.columns:
+            continue
+        idx_local = day.index.tz_convert("Asia/Tokyo") if day.index.tz is not None else day.index
+        slots = ((idx_local - idx_local.normalize()) / pd.Timedelta(minutes=30)).astype(int)
+        ser = day["JEPXスポットプライス"]
+        ser = pd.Series(ser.values, index=slots).reindex(range(48))
+        mat[str(pd.to_datetime(d).date())] = ser.values
+    return mat
+
+# ---------- Export offer (def1) ----------
 def pick_load_series(df, preferred=None):
-    """
-    優先列を指定できる。なければ需要計画量(ロス前)→使用電力量(ロス後)/0.5 の順で選ぶ。
-    """
     if preferred and preferred in df.columns:
         return df[preferred].astype(float)
-    candidates = ["需要計画量(ロス前)", "需要計画量", "需要kW"]
-    for c in candidates:
+    for c in ["需要計画量(ロス前)", "需要計画量", "需要kW"]:
         if c in df.columns and df[c].notna().any():
             return df[c].astype(float)
-    # fallback: 使用電力量(ロス後)をkW換算
     return (df["使用電力量(ロス後)"].astype(float) / 0.5)
 
 def pick_generation_series(df, preferred=None):
-    """
-    自家発がなければゼロ系列を返す。
-    """
     if preferred and preferred in df.columns:
         return df[preferred].astype(float)
     for c in ["自家発出力", "PV出力", "太陽光出力", "発電kW"]:
@@ -158,15 +153,61 @@ def pick_generation_series(df, preferred=None):
     return pd.Series(0.0, index=df.index)
 
 def compute_export_offer_def1(df, P_pcs=1000.0, P_exp_max=None, load_col=None, gen_col=None):
-    """
-    供出可能量（定義①）: max(0, P_pcs - (L - G)), 逆潮上限でクリップ
-    """
     L = pick_load_series(df, preferred=load_col)
     G = pick_generation_series(df, preferred=gen_col)
     offer = (P_pcs - (L - G)).clip(lower=0)
     if P_exp_max is not None:
         offer = offer.clip(upper=float(P_exp_max))
     return offer, L, G
+
+# ---------- SOC simulation with periodic reset ----------
+def simulate_soc_periodic_reset(
+    df, P_pcs=1000.0, E_nom=2000.0, start=None,
+    soc_init_pct=90.0, soc_floor_pct=10.0, reset_every_days=4,
+    load_col=None, gen_col=None
+):
+    """4日などの周期で日の初め(00:00)にSOCを初期値に戻す前提でSOC推移を返す"""
+    if start is not None:
+        start = pd.Timestamp(start)
+        if df.index.tz is not None and start.tzinfo is None:
+            start = start.tz_localize(df.index.tz)
+        df = df.loc[df.index >= start]
+
+    L = pick_load_series(df, preferred=load_col)
+    G = pick_generation_series(df, preferred=gen_col)
+
+    net_load = (L - G).clip(lower=0.0)
+    supply_kW = net_load.clip(upper=P_pcs)
+    use_kWh = (supply_kW * 0.5).fillna(0.0)
+
+    E_init = float(soc_init_pct) / 100.0 * E_nom
+    E_floor = float(soc_floor_pct) / 100.0 * E_nom
+
+    times = use_kWh.index
+    if len(times) == 0:
+        return pd.DataFrame(columns=["SOC_kWh", "SOC_%", "recharged", "hit_floor"])
+
+    start_day = times[0].normalize()
+    E = E_init
+    soc_kWh = []
+    soc_pct = []
+    recharged = []
+    hit_floor = []
+
+    for t, e_use in use_kWh.items():
+        day_num = int((t.normalize() - start_day) / pd.Timedelta(days=1))
+        if (t.hour == 0 and t.minute == 0) and (day_num % int(reset_every_days) == 0):
+            E = E_init
+            recharged.append(True)
+        else:
+            recharged.append(False)
+
+        E = max(E_floor, E - float(e_use))
+        soc_kWh.append(E)
+        soc_pct.append(100.0 * E / E_nom)
+        hit_floor.append(E <= E_floor + 1e-9)
+
+    return pd.DataFrame({"SOC_kWh": soc_kWh, "SOC_%": soc_pct, "recharged": recharged, "hit_floor": hit_floor}, index=times)
 
 def plot_lines(x, y_dict, xlabel, ylabel, title):
     plt.figure(figsize=(12, 6))
