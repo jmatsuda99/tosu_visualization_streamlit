@@ -347,7 +347,7 @@ def simulate_soc_concurrent_price_optimized(
             # 充電（割当分+容量制約+SOC上限）
             add = alloc.loc[t] if is_charge_day else 0.0
             # 容量上限
-            add = min(add, max(0.0, E_nom - E_curr))
+            add = min(add, max(0.0, E_init - E_curr))
             E_curr += add
 
             E.append(E_curr)
