@@ -7,7 +7,7 @@ from utils_timeseries import (
     load_excel_to_df, select_range, series_picker, aggregate_df,
     list_dates, get_day_slice, overlay_by_dates, overlay_by_dates_price, overlay_price_full_year,
     plot_lines, compute_export_offer_def1,
-    simulate_soc_with_charge_periodic_reset, derive_charge_cost_series
+    simulate_soc_with_charge_periodic_reset, derive_charge_cost_series, simulate_soc_concurrent_price_optimized
 )
 
 st.set_page_config(page_title="鳥栖PO1期 可視化ツール", layout="wide")
@@ -246,6 +246,7 @@ with tab6:
 # --- Tab7: SOC simulation with charge and period selection ---
 with tab7:
     st.subheader("SOCシミュレーション（充電コマ考慮・期間指定）")
+    st.caption("充電中も負荷供出を継続し、(供出kW + 充電kW) ≤ PCS。充電日は当日最安コマから割当るオプションを追加。")
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         start_soc = st.date_input("開始日", value=min_t.date(), key="t7_start")
@@ -266,7 +267,18 @@ with tab7:
         P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
     load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
     gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
-    soc_df = simulate_soc_with_charge_periodic_reset(
+    policy = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t7_policy")
+    if policy == "当日最安コマ優先（同時供出）":
+        soc_df = simulate_soc_concurrent_price_optimized(
+            df,
+            P_pcs=P_pcs_for_soc, P_chg=P_chg, E_nom=E_nom,
+            start=pd.Timestamp(start_soc), end=pd.Timestamp(end_soc) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
+            soc_init_pct=soc_init_pct, soc_floor_pct=soc_floor_pct, reset_every_days=reset_days,
+            load_col=(None if load_col7=="自動" else load_col7),
+            gen_col=(None if gen_col7=="自動" else gen_col7)
+        )
+    else:
+        soc_df = simulate_soc_with_charge_periodic_reset(
         df,
         P_pcs=P_pcs_for_soc, P_chg=P_chg, E_nom=E_nom,
         start=pd.Timestamp(start_soc), end=pd.Timestamp(end_soc) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
@@ -317,7 +329,9 @@ with tab8:
     with c8:
         P_pcs8 = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t8_pcs")
     dfr8 = select_range(df, pd.Timestamp(start_cost), pd.Timestamp(end_cost) + pd.Timedelta(days=1))
-    soc_df8 = simulate_soc_with_charge_periodic_reset(
+    policy8 = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t8_policy")
+    if policy8 == "当日最安コマ優先（同時供出）":
+        soc_df8 = simulate_soc_concurrent_price_optimized(
         dfr8, P_pcs=P_pcs8, P_chg=P_chg8, E_nom=E_nom8,
         start=pd.Timestamp(start_cost), end=pd.Timestamp(end_cost) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
         soc_init_pct=soc_init_pct8, soc_floor_pct=soc_floor_pct8, reset_every_days=reset_days8

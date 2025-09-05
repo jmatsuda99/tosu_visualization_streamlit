@@ -243,3 +243,125 @@ def derive_charge_cost_series(soc_df, df_price, price_col="JEPXスポットプ�
     cost = charge_kWh * price_series
     cum_cost = cost.cumsum()
     return charge_kWh, price_series, cost, cum_cost
+
+
+def simulate_soc_concurrent_price_optimized(
+    df, P_pcs=1000.0, P_chg=1000.0, E_nom=2000.0,
+    start=None, end=None,
+    soc_init_pct=90.0, soc_floor_pct=10.0, reset_every_days=4,
+    price_col="JEPXスポットプライス",
+    load_col=None, gen_col=None
+):
+    """
+    充電日には「その日の最安コマから」充電量を割当。
+    充電中も負荷対応を継続し、(供出kW + 充電kW) <= PCS定格 を満たす。
+    充電は初期SOC(=目標)まで。到達不能な場合はその日最大限充電して翌日に繰越。
+    """
+    # 期間トリム
+    if start is not None:
+        start = pd.Timestamp(start)
+        if df.index.tz is not None and start.tzinfo is None:
+            start = start.tz_localize(df.index.tz)
+        df = df.loc[df.index >= start]
+    if end is not None:
+        end = pd.Timestamp(end)
+        if df.index.tz is not None and end.tzinfo is None:
+            end = end.tz_localize(df.index.tz)
+        df = df.loc[df.index <= end]
+    if df.empty:
+        return pd.DataFrame(columns=["SOC_kWh", "SOC_%", "charging", "charge_kWh", "supply_kW"])
+
+    # 需要・自家発
+    L = pick_load_series(df, preferred=load_col)
+    G = pick_generation_series(df, preferred=gen_col)
+    net_load = (L - G).clip(lower=0.0)  # kW
+    # まず負荷に供出（PCS上限）
+    supply_kW = net_load.clip(upper=float(P_pcs))
+
+    # 価格
+    if price_col in df.columns:
+        price = df[price_col].astype(float)
+    else:
+        price = pd.Series(0.0, index=df.index)
+
+    # 初期/下限
+    E_init = float(soc_init_pct) / 100.0 * E_nom
+    E_floor = float(soc_floor_pct) / 100.0 * E_nom
+
+    # スロット長
+    slot_h = 0.5
+
+    # 出力用ベクトル
+    E = []
+    E_curr = E_init
+    charging_flag = []
+    charge_kWh_vec = []
+
+    times = df.index
+    start_day = times[0].normalize()
+
+    # 日単位でスケジューリング
+    day_groups = df.groupby(df.index.normalize())
+
+    day_counter = 0
+    for day, d in day_groups:
+        # その日が充電日か？
+        is_charge_day = (day_counter % int(reset_every_days) == 0)
+        prices = price.loc[d.index]
+        sup_kW = supply_kW.loc[d.index]
+
+        # まず「充電ゼロ」で当日終端までSOCを推定
+        E_tmp = E_curr
+        soc_floor_clip = []
+        E_path_nochg = []
+        for kW in sup_kW:
+            E_tmp = max(E_floor, E_tmp - kW * slot_h)  # 放電のみ
+            E_path_nochg.append(E_tmp)
+            soc_floor_clip.append(E_tmp <= E_floor + 1e-9)
+
+        # 目標SOC（初期SOC）まで戻すための必要量R
+        R = max(0.0, E_init - E_path_nochg[-1]) if is_charge_day else 0.0
+
+        # 充電可能容量（各コマ）：min(P_chg, P_pcs - supply_kW) * slot_h
+        chg_cap = (pd.Series(float(P_pcs), index=d.index) - sup_kW).clip(lower=0.0)
+        chg_cap = pd.concat([chg_cap, pd.Series(float(P_chg), index=d.index)], axis=1).min(axis=1) * slot_h  # kWh/slot
+
+        # 価格最小から割当（is_charge_day のときだけ）
+        alloc = pd.Series(0.0, index=d.index)
+        if is_charge_day and R > 0:
+            order = prices.sort_values(kind="mergesort").index  # 安定ソート
+            remaining = R
+            for t in order:
+                cap = chg_cap.loc[t]
+                if cap <= 0 or remaining <= 0:
+                    continue
+                add = min(cap, remaining)
+                alloc.loc[t] = add
+                remaining -= add
+            # 残があれば翌日に繰越（ここでは警告せず、残量はE_currに反映されるだけ）
+
+        # 当日の時間軸でSOCを更新（同時供出を考慮）
+        for t in d.index:
+            # 放電
+            E_curr = max(E_floor, E_curr - sup_kW.loc[t] * slot_h)
+            # 充電（割当分+容量制約+SOC上限）
+            add = alloc.loc[t] if is_charge_day else 0.0
+            # 容量上限
+            add = min(add, max(0.0, E_nom - E_curr))
+            E_curr += add
+
+            E.append(E_curr)
+            charging_flag.append(add > 1e-12)
+            charge_kWh_vec.append(add)
+
+        day_counter += 1
+
+    out = pd.DataFrame({
+        "SOC_kWh": E,
+        "SOC_%": [100.0 * e / E_nom for e in E],
+        "charging": charging_flag,
+        "charge_kWh": charge_kWh_vec,
+        "supply_kW": supply_kW.values
+    }, index=df.index)
+
+    return out
