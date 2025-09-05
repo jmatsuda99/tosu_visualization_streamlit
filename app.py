@@ -266,8 +266,6 @@ with tab7:
     with c8:
         P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
     load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
-    gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
-    policy = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t7_policy")
     policy = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t7_policy")
     if policy == "当日最安コマ優先（同時供出）":
         soc_df = simulate_soc_concurrent_price_optimized(
@@ -305,6 +303,9 @@ with tab7:
         st.pyplot(fig8)
         st.download_button("CSVをダウンロード（SOC/充電コマ）", data=soc_df.to_csv().encode("utf-8-sig"),
                            file_name="soc_with_charge_and_period.csv", mime="text/csv", key="t7_dl")
+        st.pyplot(fig8)
+        st.download_button("CSVをダウンロード（SOC/充電コマ）", data=soc_df.to_csv().encode("utf-8-sig"),
+                           file_name="soc_with_charge_and_period.csv", mime="text/csv", key="t7_dl")
 
 # --- Tab8: Charging cost summary ---
 with tab8:
@@ -330,6 +331,8 @@ with tab8:
     with c8:
         P_pcs8 = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t8_pcs")
     dfr8 = select_range(df, pd.Timestamp(start_cost), pd.Timestamp(end_cost) + pd.Timedelta(days=1))
+    soc_df8 = pd.DataFrame()
+
     policy8 = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t8_policy")
     if policy8 == "当日最安コマ優先（同時供出）":
         soc_df8 = simulate_soc_concurrent_price_optimized(
