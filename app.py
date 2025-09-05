@@ -268,6 +268,7 @@ with tab7:
     load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
     gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
     policy = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t7_policy")
+    policy = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t7_policy")
     if policy == "当日最安コマ優先（同時供出）":
         soc_df = simulate_soc_concurrent_price_optimized(
             df,
@@ -279,13 +280,13 @@ with tab7:
         )
     else:
         soc_df = simulate_soc_with_charge_periodic_reset(
-        df,
-        P_pcs=P_pcs_for_soc, P_chg=P_chg, E_nom=E_nom,
-        start=pd.Timestamp(start_soc), end=pd.Timestamp(end_soc) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
-        soc_init_pct=soc_init_pct, soc_floor_pct=soc_floor_pct, reset_every_days=reset_days,
-        load_col=(None if load_col7=="自動" else load_col7),
-        gen_col=(None if gen_col7=="自動" else gen_col7)
-    )
+            df,
+            P_pcs=P_pcs_for_soc, P_chg=P_chg, E_nom=E_nom,
+            start=pd.Timestamp(start_soc), end=pd.Timestamp(end_soc) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
+            soc_init_pct=soc_init_pct, soc_floor_pct=soc_floor_pct, reset_every_days=reset_days,
+            load_col=(None if load_col7=="自動" else load_col7),
+            gen_col=(None if gen_col7=="自動" else gen_col7)
+        )
     if soc_df.empty:
         st.warning("SOCシミュレーションに必要なデータが不足しています。")
     else:
@@ -332,10 +333,16 @@ with tab8:
     policy8 = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t8_policy")
     if policy8 == "当日最安コマ優先（同時供出）":
         soc_df8 = simulate_soc_concurrent_price_optimized(
-        dfr8, P_pcs=P_pcs8, P_chg=P_chg8, E_nom=E_nom8,
-        start=pd.Timestamp(start_cost), end=pd.Timestamp(end_cost) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
-        soc_init_pct=soc_init_pct8, soc_floor_pct=soc_floor_pct8, reset_every_days=reset_days8
-    )
+            dfr8, P_pcs=P_pcs8, P_chg=P_chg8, E_nom=E_nom8,
+            start=pd.Timestamp(start_cost), end=pd.Timestamp(end_cost) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
+            soc_init_pct=soc_init_pct8, soc_floor_pct=soc_floor_pct8, reset_every_days=reset_days8
+        )
+    else:
+        soc_df8 = simulate_soc_with_charge_periodic_reset(
+            dfr8, P_pcs=P_pcs8, P_chg=P_chg8, E_nom=E_nom8,
+            start=pd.Timestamp(start_cost), end=pd.Timestamp(end_cost) + pd.Timedelta(days=1) - pd.Timedelta(minutes=30),
+            soc_init_pct=soc_init_pct8, soc_floor_pct=soc_floor_pct8, reset_every_days=reset_days8
+        )
     if soc_df8.empty:
         st.warning("SOCシミュレーション対象期間にデータがありません。")
     else:
