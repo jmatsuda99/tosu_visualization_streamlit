@@ -60,20 +60,47 @@ with tab1:
     with c3:
         end = st.date_input("終了日", value=max_t.date(), min_value=min_t.date(), max_value=max_t.date(), key="t1_end")
     with c4:
-        show_price = st.checkbox("JEPXスポットプライスを右軸に表示", value=has_price, disabled=not has_price, key="t1_price")
+        outputs = st.multiselect(
+            "表示する系列",
+            ["出力(kW)", "JEPXスポットプライス"],
+            default=(["出力(kW)", "JEPXスポットプライス"] if has_price else ["出力(kW)"]),
+            key="t1_outputs"
+        )
     dfr = select_range(df, pd.Timestamp(start), pd.Timestamp(end) + pd.Timedelta(days=1))
-    plot_df = series_picker(dfr, series=series, use_kw=True)
     fig, ax = plt.subplots(figsize=(12,6))
-    for col in plot_df.columns:
-        ax.plot(plot_df.index, plot_df[col], label=col)
-    ax.set_xlabel("時刻"); ax.set_ylabel("平均出力 (kW)")
-    title = "平均出力（30分・kW）"
-    if show_price:
-        ax2 = ax.twinx()
-        ax2.plot(dfr.index, dfr["JEPXスポットプライス"])
-        ax2.set_ylabel("JEPXスポットプライス (円/kWh)")
-        title += " + 価格"
-    ax.set_title(title); ax.legend(loc="upper left"); ax.grid(True)
+
+    # 出力
+    if "出力(kW)" in outputs:
+        plot_df = series_picker(dfr, series=series, use_kw=True)
+        for col in plot_df.columns:
+            ax.plot(plot_df.index, plot_df[col], label=col)
+        ax.set_ylabel("平均出力 (kW)")
+
+    # 価格
+    if "JEPXスポットプライス" in outputs and has_price:
+        if "出力(kW)" in outputs:
+            ax2 = ax.twinx()
+            ax2.plot(dfr.index, dfr["JEPXスポットプライス"], label="価格")
+            ax2.set_ylabel("JEPXスポットプライス (円/kWh)")
+        else:
+            ax.plot(dfr.index, dfr["JEPXスポットプライス"], label="価格")
+            ax.set_ylabel("JEPXスポットプライス (円/kWh)")
+
+    ax.set_xlabel("時刻")
+    title_parts = []
+    if "出力(kW)" in outputs: title_parts.append("出力")
+    if "JEPXスポットプライス" in outputs: title_parts.append("価格")
+    ax.set_title(" / ".join(title_parts) if title_parts else "表示なし")
+
+    # 凡例（twinx 対応）
+    handles, labels = ax.get_legend_handles_labels()
+    if "JEPXスポットプライス" in outputs and "出力(kW)" in outputs:
+        h2, l2 = ax2.get_legend_handles_labels()
+        handles += h2; labels += l2
+    if handles:
+        ax.legend(handles, labels, loc="upper left")
+
+    ax.grid(True)
     st.pyplot(fig)
 
 # --- Tab2 ---
@@ -141,7 +168,7 @@ with tab3:
             ax.set_xlabel("時刻（30分刻み、0=0:00 … 47=23:30）"); ax.set_ylabel(ylabel); ax.set_title(title); ax.legend(); ax.grid(True)
             st.pyplot(fig3)
             st.download_button("CSVをダウンロード", data=mat.to_csv(index_label="slot(30min)").encode("utf-8-sig"),
-                               file_name=("overlay_kw.csv" if target=="出力(kW)" else "overlay_jepx.csv"), mime="text/csv")
+                               file_name=("overlay_kw.csv" if target=="出力(kW)" else "overlay_jepx.csv"), mime="text/csv", key="t4_dl")
 
 # --- Tab4 ---
 with tab4:
@@ -270,13 +297,11 @@ with tab7:
 with tab8:
     st.subheader("充電コスト（集計）")
     st.caption("充電は買電扱い：各スロットの充電量[kWh] × JEPX価格[円/kWh] を加算して表示（期間指定、月別）")
-    # Period
     c1, c2 = st.columns(2)
     with c1:
         start_cost = st.date_input("開始日", value=min_t.date(), key="t8_start")
     with c2:
         end_cost = st.date_input("終了日", value=max_t.date(), key="t8_end")
-    # SOC params (for reproducibility)
     c3, c4, c5 = st.columns(3)
     with c3:
         soc_init_pct8 = st.number_input("初期SOC（%）", min_value=1.0, max_value=100.0, value=90.0, step=1.0, key="t8_soc_init")
@@ -291,7 +316,6 @@ with tab8:
         P_chg8 = st.number_input("充電出力（kW）", min_value=1, value=1000, step=10, key="t8_pchg")
     with c8:
         P_pcs8 = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t8_pcs")
-    # simulate and cost
     dfr8 = select_range(df, pd.Timestamp(start_cost), pd.Timestamp(end_cost) + pd.Timedelta(days=1))
     soc_df8 = simulate_soc_with_charge_periodic_reset(
         dfr8, P_pcs=P_pcs8, P_chg=P_chg8, E_nom=E_nom8,
