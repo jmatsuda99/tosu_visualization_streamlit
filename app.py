@@ -267,6 +267,7 @@ with tab7:
         P_pcs_for_soc = st.number_input("PCS定格（kW）", min_value=1, value=1000, step=10, key="t7_pcs")
     load_col7 = st.selectbox("需要列（自動推定可）", ["自動", "需要計画量(ロス前)", "需要計画量", "需要kW"], index=0, key="t7_load")
     policy = st.radio("充電スケジュール", ["0:00から連続充電（従来）", "当日最安コマ優先（同時供出）"], horizontal=True, key="t7_policy")
+    gen_col7 = st.selectbox("自家発列（無ければなし）", ["自動", "自家発出力", "PV出力", "太陽光出力", "発電kW"], index=0, key="t7_gen")
     if policy == "当日最安コマ優先（同時供出）":
         soc_df = simulate_soc_concurrent_price_optimized(
             df,
