@@ -304,10 +304,6 @@ with tab7:
         st.pyplot(fig8)
         st.download_button("CSVをダウンロード（SOC/充電コマ）", data=soc_df.to_csv().encode("utf-8-sig"),
                            file_name="soc_with_charge_and_period.csv", mime="text/csv", key="t7_dl")
-        st.pyplot(fig8)
-        st.download_button("CSVをダウンロード（SOC/充電コマ）", data=soc_df.to_csv().encode("utf-8-sig"),
-                           file_name="soc_with_charge_and_period.csv", mime="text/csv", key="t7_dl")
-
 # --- Tab8: Charging cost summary ---
 with tab8:
     st.subheader("充電コスト（集計）")
